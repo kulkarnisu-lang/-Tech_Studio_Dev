@@ -5,6 +5,7 @@ import TrustStrip from './components/TrustStrip';
 import Services from './components/Services';
 import AIAutomation from './components/AIAutomation';
 import AIUseCases from './components/AIUseCases';
+import SampleWorkflows from './components/SampleWorkflows';
 import ComparisonSection from './components/ComparisonSection';
 import Solutions from './components/Solutions';
 import Approach from './components/Approach';
@@ -16,7 +17,7 @@ import About from './components/About';
 import Assessment from './components/Assessment';
 import FAQ from './components/FAQ';
 import ContactSection from './components/ContactSection';
-import ContactModal from './components/ContactModal';
+import ContactModal, { type ContactModalMode } from './components/ContactModal';
 import Footer from './components/Footer';
 import { AdminProvider, useAdmin } from './context/AdminContext';
 import AdminPortal from './components/admin/AdminPortal';
@@ -25,9 +26,17 @@ function AppContent() {
   const { isAdminView } = useAdmin();
   const [modalOpen, setModalOpen] = useState(false);
   const [consultationTopic, setConsultationTopic] = useState<string | undefined>();
+  const [modalMode, setModalMode] = useState<ContactModalMode>('consultation');
 
   const handleOpenConsultation = (topic?: string) => {
+    setModalMode('consultation');
     setConsultationTopic(topic);
+    setModalOpen(true);
+  };
+
+  const handleOpenResource = () => {
+    setModalMode('sample-download');
+    setConsultationTopic('Sample Workflow Library');
     setModalOpen(true);
   };
 
@@ -51,6 +60,7 @@ function AppContent() {
         <Services onOpenConsultation={handleOpenConsultation} />
         <AIAutomation onOpenConsultation={handleOpenConsultation} />
         <AIUseCases onOpenConsultation={handleOpenConsultation} />
+        <SampleWorkflows onOpenResource={handleOpenResource} />
         <ComparisonSection onOpenConsultation={handleOpenConsultation} />
         <Solutions onOpenConsultation={handleOpenConsultation} />
         <Approach onOpenConsultation={handleOpenConsultation} />
@@ -68,11 +78,14 @@ function AppContent() {
       <Footer />
 
       {/* Quick Consultation Modal */}
-      <ContactModal
-        isOpen={modalOpen}
-        onClose={handleCloseConsultation}
-        initialTopic={consultationTopic}
-      />
+      {modalOpen && (
+        <ContactModal
+          isOpen={modalOpen}
+          onClose={handleCloseConsultation}
+          initialTopic={consultationTopic}
+          mode={modalMode}
+        />
+      )}
     </div>
   );
 }
@@ -84,4 +97,3 @@ export default function App() {
     </AdminProvider>
   );
 }
-

@@ -1,0 +1,81 @@
+{
+  "name": "AI API Testing Assistant",
+  "version": "1.0.0",
+  "description": "AI-powered automation workflow: OpenAPI spec intake -> Contract test generation -> Payload validation suite -> Automated API regression execution",
+  "owner": "Tech_Studio QE Practice",
+  "trigger": {
+    "type": "event",
+    "source": "openapi_spec_updated_in_repo",
+    "supported_triggers": ["git_push_to_spec_path", "manual_cli", "scheduled_batch"]
+  },
+  "input_schema": {
+    "required": ["openapi_spec_ref", "target_environment"],
+    "optional": ["auth_config", "existing_contract_tests", "sla_thresholds"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "name": "Parse OpenAPI Spec",
+      "action": "extract_endpoints_schemas_and_constraints",
+      "extracted": ["request_schemas", "response_schemas", "status_codes", "auth_requirements", "rate_limits"]
+    },
+    {
+      "step": 2,
+      "name": "Diff Against Previous Spec Version",
+      "action": "detect_breaking_changes",
+      "checks": ["removed_fields", "changed_types", "new_required_fields", "removed_endpoints"],
+      "on_breaking_change": "flag_as_high_priority_test_target"
+    },
+    {
+      "step": 3,
+      "name": "Generate Contract & Payload Tests",
+      "provider": "Anthropic Claude API",
+      "model": "claude-sonnet-4-6",
+      "test_types": ["schema_validation", "status_code_assertions", "boundary_value_payloads", "malformed_payload_negative_tests", "auth_and_permission_checks"],
+      "output_format": "code_file",
+      "target_frameworks_supported": ["Postman/Newman", "REST Assured", "Playwright API", "pytest + requests"]
+    },
+    {
+      "step": 4,
+      "name": "Generate Performance Smoke Checks",
+      "action": "create_basic_latency_and_throughput_assertions",
+      "thresholds_source": "sla_thresholds_input_or_defaults"
+    },
+    {
+      "step": 5,
+      "name": "Dry-Run Against Target Environment",
+      "action": "execute_generated_suite",
+      "on_failure": "distinguish_env_issue_vs_genuine_contract_violation"
+    },
+    {
+      "step": 6,
+      "name": "Human Review Gate",
+      "assignee_rule": "api_test_owner",
+      "sla_hours": 24,
+      "actions": ["approve_and_merge", "request_changes", "reject"]
+    },
+    {
+      "step": 7,
+      "name": "Integrate into Regression Suite",
+      "action": "merge_into_ci_api_test_job",
+      "on_merge": ["update_test_management_tool", "notify_slack_channel"]
+    }
+  ],
+  "error_handling": {
+    "retry_policy": { "max_attempts": 2, "backoff": "linear" },
+    "on_generation_failure": "notify_api_test_owner",
+    "on_breaking_change_undetected_risk": "escalate_to_api_owner_before_merge"
+  },
+  "quality_gates": {
+    "require_human_approval_before_merge": true,
+    "block_merge_on_undocumented_breaking_change": true
+  },
+  "monitoring": {
+    "metrics_tracked": [
+      "contract_tests_generated_per_spec_change",
+      "breaking_changes_caught_pre_release",
+      "api_regression_pass_rate",
+      "avg_latency_sla_compliance"
+    ]
+  }
+}

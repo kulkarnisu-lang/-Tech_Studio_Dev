@@ -1,0 +1,98 @@
+{
+  "name": "Defect Triage Automation",
+  "version": "1.0.0",
+  "description": "AI-powered automation workflow: New defect intake -> Duplicate detection -> AI severity/priority classification -> Auto-assignment -> Stale defect escalation",
+  "owner": "Tech_Studio QE Practice",
+  "trigger": {
+    "type": "event",
+    "source": "bug_tracker_webhook",
+    "event_types": ["issue_created", "issue_updated"],
+    "supported_trackers": ["Jira", "Azure DevOps", "GitHub Issues"]
+  },
+  "input_schema": {
+    "required": ["defect_id", "title", "description", "reported_by", "environment"],
+    "optional": ["stack_trace", "screenshots", "steps_to_reproduce", "build_version"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "name": "Normalize Defect Payload",
+      "action": "extract_structured_fields",
+      "fields_extracted": ["module", "environment", "build_version", "error_signature"]
+    },
+    {
+      "step": 2,
+      "name": "Duplicate Detection",
+      "action": "semantic_similarity_search",
+      "provider": "vector_db_embedding_match",
+      "similarity_threshold": 0.87,
+      "on_duplicate_found": "link_as_duplicate_and_notify_reporter"
+    },
+    {
+      "step": 3,
+      "name": "AI Severity & Priority Classification",
+      "provider": "Anthropic Claude API",
+      "model": "claude-sonnet-4-6",
+      "classification_inputs": ["title", "description", "stack_trace", "affected_module", "environment"],
+      "output_format": "json",
+      "output_schema": {
+        "severity": "enum(critical, major, minor, trivial)",
+        "priority": "enum(P1, P2, P3, P4)",
+        "suggested_component": "string",
+        "reasoning": "string",
+        "confidence": "float (0-1)"
+      },
+      "fallback_on_low_confidence": "route_to_manual_triage_queue"
+    },
+    {
+      "step": 4,
+      "name": "Auto-Assignment",
+      "action": "assign_by_component_ownership_map",
+      "source": "codeowners_or_component_mapping_file",
+      "load_balancing": "round_robin_within_team",
+      "condition": "confidence >= 0.75"
+    },
+    {
+      "step": 5,
+      "name": "Critical Defect Escalation",
+      "condition": "severity == 'critical'",
+      "on_true": [
+        "page_on_call_engineer",
+        "create_incident_channel",
+        "notify_engineering_manager"
+      ]
+    },
+    {
+      "step": 6,
+      "name": "Stale Defect Monitor",
+      "schedule": "0 9 * * 1-5",
+      "condition": "status == 'open' AND days_since_update > sla_by_priority",
+      "action": "escalate_to_team_lead_and_flag_in_standup_report"
+    },
+    {
+      "step": 7,
+      "name": "Log Triage Decision",
+      "action": "write_to_analytics_store",
+      "destination": "data_warehouse.defect_triage_events",
+      "purpose": "feedback loop for classification model tuning"
+    }
+  ],
+  "error_handling": {
+    "retry_policy": { "max_attempts": 3, "backoff": "exponential" },
+    "on_classification_failure": "route_to_manual_triage_queue",
+    "dead_letter_queue": "defect-triage-dlq"
+  },
+  "sla_policy": {
+    "critical_first_response_minutes": 15,
+    "major_first_response_hours": 4,
+    "minor_first_response_hours": 24
+  },
+  "monitoring": {
+    "metrics_tracked": [
+      "avg_triage_time",
+      "classification_accuracy_vs_human_override",
+      "duplicate_detection_rate",
+      "sla_breach_rate"
+    ]
+  }
+}

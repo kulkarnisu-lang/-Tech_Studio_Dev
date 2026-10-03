@@ -1,0 +1,85 @@
+{
+  "name": "AI Test Automation Assistant",
+  "version": "1.0.0",
+  "description": "AI-powered automation workflow: Manual test case intake -> AI-generated automation scripts -> Locator resiliency check -> Maintenance suggestions for existing suites",
+  "owner": "Tech_Studio QE Practice",
+  "trigger": {
+    "type": "event",
+    "source": "test_case_approved_in_test_management_tool",
+    "supported_triggers": ["manual_cli", "pr_comment_command", "scheduled_batch"]
+  },
+  "input_schema": {
+    "required": ["test_case_id", "test_steps", "target_framework"],
+    "optional": ["page_object_refs", "existing_locators", "app_url"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "name": "Fetch Test Case & App Context",
+      "source": "test_management_tool",
+      "context_gathered": ["existing_page_objects", "component_naming_conventions", "prior_automation_patterns"]
+    },
+    {
+      "step": 2,
+      "name": "Generate Automation Script",
+      "provider": "Anthropic Claude API",
+      "model": "claude-sonnet-4-6",
+      "target_frameworks_supported": ["Playwright", "Cypress", "WebdriverIO"],
+      "output_style": "Page Object Model / App Action pattern",
+      "output_format": "code_file",
+      "parameters": { "temperature": 0.2, "max_tokens": 4000 }
+    },
+    {
+      "step": 3,
+      "name": "Locator Resiliency Check",
+      "action": "static_analysis_of_generated_locators",
+      "rules": ["prefer_role_and_test_id_over_css_or_xpath", "flag_brittle_nth_child_selectors", "flag_hardcoded_waits"],
+      "on_violation": "auto_fix_or_flag_for_review"
+    },
+    {
+      "step": 4,
+      "name": "Dry-Run Execution",
+      "action": "run_generated_test_in_isolated_environment",
+      "retry_on_transient_failure": 1,
+      "on_failure": "attach_error_and_return_to_generation_step"
+    },
+    {
+      "step": 5,
+      "name": "Existing Suite Maintenance Scan",
+      "action": "scan_repo_for_flaky_or_deprecated_selectors",
+      "schedule": "weekly",
+      "output": "maintenance_suggestions_report"
+    },
+    {
+      "step": 6,
+      "name": "Human Review Gate",
+      "assignee_rule": "automation_engineer_on_duty",
+      "sla_hours": 24,
+      "actions": ["approve_and_merge", "request_changes", "reject"]
+    },
+    {
+      "step": 7,
+      "name": "Commit to Repository",
+      "action": "open_pull_request",
+      "branch_naming": "ai-automation/{{test_case_id}}",
+      "on_merge": ["update_test_management_tool_status", "notify_slack_channel"]
+    }
+  ],
+  "error_handling": {
+    "retry_policy": { "max_attempts": 2, "backoff": "linear" },
+    "on_generation_failure": "notify_automation_lead",
+    "on_repeated_dry_run_failure": "escalate_to_manual_authoring"
+  },
+  "quality_gates": {
+    "require_human_approval_before_merge": true,
+    "min_dry_run_pass_rate": 1.0
+  },
+  "monitoring": {
+    "metrics_tracked": [
+      "scripts_generated_per_sprint",
+      "human_edit_rate",
+      "dry_run_first_pass_success_rate",
+      "flaky_selector_count_trend"
+    ]
+  }
+}

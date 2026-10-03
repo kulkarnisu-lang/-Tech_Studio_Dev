@@ -1,0 +1,81 @@
+{
+  "name": "AI Test Data Assistant",
+  "version": "1.0.0",
+  "description": "AI-powered automation workflow: Schema/API spec intake -> Synthetic realistic test data generation -> PII-safe masking -> Provisioning into test environments",
+  "owner": "Tech_Studio QE Practice",
+  "trigger": {
+    "type": "event",
+    "source": "pipeline_pre_test_stage",
+    "supported_triggers": ["ci_pipeline_step", "manual_cli", "scheduled_refresh"]
+  },
+  "input_schema": {
+    "required": ["schema_ref", "record_count", "target_environment"],
+    "optional": ["edge_case_profiles", "referential_integrity_rules", "locale"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "name": "Parse Schema / API Spec",
+      "source": "openapi_spec_or_db_schema",
+      "extracted": ["field_types", "constraints", "foreign_key_relationships", "enum_values"]
+    },
+    {
+      "step": 2,
+      "name": "Generate Synthetic Dataset",
+      "provider": "Anthropic Claude API",
+      "model": "claude-sonnet-4-6",
+      "generation_profiles": ["happy_path", "boundary_values", "invalid_format", "unicode_and_locale_edge_cases", "large_payload_stress"],
+      "output_format": "json / sql_insert / csv",
+      "parameters": { "temperature": 0.4, "max_tokens": 6000 }
+    },
+    {
+      "step": 3,
+      "name": "Referential Integrity Validation",
+      "action": "verify_foreign_keys_and_unique_constraints",
+      "on_violation": "regenerate_affected_records"
+    },
+    {
+      "step": 4,
+      "name": "PII-Safe Masking Check",
+      "action": "scan_for_realistic_but_non_production_pii",
+      "rule": "never_reuse_real_customer_data",
+      "on_violation": "block_and_regenerate"
+    },
+    {
+      "step": 5,
+      "name": "Provision to Test Environment",
+      "destinations": ["staging_db", "mock_api_server", "test_fixture_files"],
+      "action": "load_dataset",
+      "cleanup_policy": "auto_teardown_after_test_run"
+    },
+    {
+      "step": 6,
+      "name": "Version & Snapshot Dataset",
+      "action": "store_generation_snapshot",
+      "purpose": "reproducibility for flaky test debugging"
+    },
+    {
+      "step": 7,
+      "name": "Notify Team",
+      "channel": "slack:#qa-automation",
+      "message_template": "Test data refreshed for {{target_environment}} — {{record_count}} records, {{profile_count}} edge-case profiles"
+    }
+  ],
+  "error_handling": {
+    "retry_policy": { "max_attempts": 3, "backoff": "exponential" },
+    "on_generation_failure": "fall_back_to_last_known_good_snapshot",
+    "on_pii_violation": "halt_pipeline_and_alert_data_governance"
+  },
+  "quality_gates": {
+    "require_pii_scan_pass": true,
+    "require_referential_integrity_pass": true
+  },
+  "monitoring": {
+    "metrics_tracked": [
+      "dataset_generation_latency",
+      "regeneration_rate_due_to_violations",
+      "test_flakiness_reduction_after_stable_data",
+      "environment_provisioning_success_rate"
+    ]
+  }
+}

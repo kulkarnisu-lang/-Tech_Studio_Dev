@@ -40,7 +40,7 @@ Accessible via keyboard shortcut **`Ctrl + Shift + A`** or the subtle lock icon 
   - Ready-to-paste template bodies with all variable bindings.
 - **Security & Access Control**:
   - Authorized Google Sign-In checking against `devmarlow01@gmail.com`.
-  - Fallback emergency PIN access.
+  - Verified owner Google sign-in; browser flags and passcodes do not grant access.
   - Cloud Firestore real-time persistence with offline local storage fallback.
   - Audit logging of all administrative actions.
 
@@ -52,7 +52,7 @@ Accessible via keyboard shortcut **`Ctrl + Shift + A`** or the subtle lock icon 
 - **Styling**: Tailwind CSS v4, Motion
 - **Icons**: Lucide React
 - **Cloud Database**: Firebase Firestore
-- **Authentication**: Firebase Auth (Google Provider & Passcode Fallback)
+- **Authentication**: Firebase Auth (verified owner Google account)
 - **Email Automation**: EmailJS (`@emailjs/browser`)
 
 ---
@@ -78,9 +78,8 @@ cp .env.example .env
 
 Edit `.env` to provide your configuration:
 ```env
-# Authorized Administrator Email & Fallback Passcode
-VITE_ADMIN_EMAIL=devmarlow01@gmail.com
-VITE_ADMIN_PASSCODE=123456
+# Firebase Authentication is required for website administration.
+VITE_FIREBASE_API_KEY=your_firebase_web_api_key
 
 # EmailJS Service Integration (for automated client confirmation & lead alerts)
 VITE_EMAILJS_SERVICE_ID=your_emailjs_service_id
@@ -88,9 +87,7 @@ VITE_EMAILJS_PUBLIC_KEY=your_emailjs_public_key
 VITE_EMAILJS_TEMPLATE_CONFIRMATION=your_template_id_client
 VITE_EMAILJS_TEMPLATE_ALERT=your_template_id_owner
 
-# Optional: Custom Firebase configuration (otherwise uses built-in cloud instance)
-# VITE_FIREBASE_API_KEY=
-# VITE_FIREBASE_PROJECT_ID=
+# The Firebase project/database are defined in firebase-applet-config.json.
 ```
 
 ### 4. Run Development Server
@@ -131,8 +128,22 @@ The compiled, production-ready static assets will be output in the `dist/` direc
 1. Push your code to GitHub.
 2. Import the repository in [Vercel](https://vercel.com).
 3. Framework Preset: **Vite**.
-4. Add your environment variables (`VITE_ADMIN_EMAIL`, `VITE_EMAILJS_*`, etc.).
+4. Add your environment variables (`VITE_FIREBASE_API_KEY`, `VITE_EMAILJS_*`, etc.).
 5. Click **Deploy**.
+
+### Owner-only editing and Firebase rules
+The existing website owner is `devmarlow01@gmail.com`. Only that verified account can enter the admin console or write published content. Visitors can read published content and create a new consultation or sample-download inquiry; they cannot read, update, or delete leads or audit records. Site/repository collaborators also need to remain restricted to the owner in their respective hosting settings.
+
+1. Enable Google sign-in in the Firebase project's Authentication settings.
+2. Add the actual Vercel and Sites domains to Firebase Authentication's authorized domains.
+3. Set `VITE_FIREBASE_API_KEY` on the hosting provider before building.
+4. Deploy the rules to the named Firestore database with an authenticated project owner:
+
+```bash
+npx firebase-tools deploy --only firestore:rules --project confident-studio-5ghtt
+```
+
+A GitHub push or frontend deployment does not deploy Firebase rules. The `firebase.json` file targets the database used by this website. Without Firebase configuration, the public website and sample library still render, but admin editing is disabled and inquiry storage stays in that browser. Administrator passwords must never be placed in public `VITE_*` variables.
 
 ### Deploying to Netlify / Cloudflare Pages / Cloud Run
 The app builds into a standard static SPA (`dist/`). Configure your single-page app rewrite rule (`/* -> /index.html`) on your hosting platform.

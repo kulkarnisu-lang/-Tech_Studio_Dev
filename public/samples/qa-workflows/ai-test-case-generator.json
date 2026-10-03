@@ -1,0 +1,93 @@
+{
+  "name": "AI Test Case Generator",
+  "version": "1.0.0",
+  "description": "AI-powered automation workflow: Requirement/User Story ingestion -> LLM test case generation -> Coverage validation -> Test Management sync",
+  "owner": "Tech_Studio QE Practice",
+  "trigger": {
+    "type": "event",
+    "source": "jira_issue_transition",
+    "condition": "status == 'Ready for QA'",
+    "supported_triggers": ["jira_webhook", "manual_cli", "scheduled_batch"]
+  },
+  "input_schema": {
+    "required": ["requirement_id", "requirement_text", "acceptance_criteria"],
+    "optional": ["linked_designs", "api_spec_ref", "risk_level"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "name": "Fetch Requirement Context",
+      "source": "jira",
+      "fields": ["summary", "description", "acceptance_criteria", "linked_epics", "attachments"]
+    },
+    {
+      "step": 2,
+      "name": "Retrieve Related Test History",
+      "action": "query_test_management_tool",
+      "provider": "Xray / Zephyr / TestRail",
+      "purpose": "avoid duplicate test cases, reuse existing step patterns"
+    },
+    {
+      "step": 3,
+      "name": "Generate Test Cases",
+      "provider": "Anthropic Claude API",
+      "model": "claude-sonnet-4-6",
+      "generation_types": ["positive", "negative", "boundary", "edge_case", "regression_candidate"],
+      "output_format": "json",
+      "output_schema": {
+        "test_case_id": "string",
+        "title": "string",
+        "preconditions": "string",
+        "steps": "array<string>",
+        "expected_result": "string",
+        "priority": "enum(P1, P2, P3)",
+        "type": "enum(functional, regression, edge_case, negative)"
+      },
+      "parameters": { "temperature": 0.3, "max_tokens": 4000 }
+    },
+    {
+      "step": 4,
+      "name": "Coverage Validation",
+      "action": "map_test_cases_to_acceptance_criteria",
+      "min_coverage_percent": 100,
+      "on_gap_detected": "flag_missing_scenarios_for_review"
+    },
+    {
+      "step": 5,
+      "name": "Human Review Gate",
+      "assignee_rule": "requirement_owner_or_qa_lead",
+      "sla_hours": 12,
+      "actions": ["approve", "edit", "reject_and_regenerate"]
+    },
+    {
+      "step": 6,
+      "name": "Sync to Test Management Tool",
+      "destination": "Xray / Zephyr / TestRail",
+      "action": "create_or_update_test_cases",
+      "link_back_to": "requirement_id"
+    },
+    {
+      "step": 7,
+      "name": "Notify QA Team",
+      "channel": "slack:#qa-automation",
+      "message_template": "{{count}} test cases generated for {{requirement_id}} — pending review"
+    }
+  ],
+  "error_handling": {
+    "retry_policy": { "max_attempts": 3, "backoff": "exponential" },
+    "on_generation_failure": "notify_qa_lead_and_flag_requirement",
+    "on_low_coverage": "escalate_to_manual_test_design"
+  },
+  "quality_gates": {
+    "require_human_approval_before_execution": true,
+    "min_ai_confidence_score": 0.75
+  },
+  "monitoring": {
+    "metrics_tracked": [
+      "test_cases_generated_per_sprint",
+      "human_edit_rate",
+      "coverage_gap_rate",
+      "time_saved_vs_manual_authoring"
+    ]
+  }
+}

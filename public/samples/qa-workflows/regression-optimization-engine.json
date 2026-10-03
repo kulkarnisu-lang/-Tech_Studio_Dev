@@ -1,0 +1,85 @@
+{
+  "name": "Regression Optimization Engine",
+  "version": "1.0.0",
+  "description": "AI-powered automation workflow: Code diff analysis -> Impacted-area mapping -> Smart test selection -> Regression suite pruning recommendations",
+  "owner": "Tech_Studio QE Practice",
+  "trigger": {
+    "type": "event",
+    "source": "pull_request_opened_or_updated",
+    "supported_triggers": ["github_actions", "gitlab_ci", "manual_cli"]
+  },
+  "input_schema": {
+    "required": ["pr_diff", "full_regression_suite_manifest", "historical_test_execution_data"],
+    "optional": ["code_ownership_map", "risk_tier_overrides"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "name": "Analyze Code Diff",
+      "action": "parse_changed_files_and_functions",
+      "extracted": ["changed_modules", "changed_api_endpoints", "changed_ui_components"]
+    },
+    {
+      "step": 2,
+      "name": "Map Impacted Test Coverage",
+      "action": "cross_reference_diff_against_test_to_code_coverage_map",
+      "provider": "coverage_report_ingestion"
+    },
+    {
+      "step": 3,
+      "name": "AI Risk-Based Test Selection",
+      "provider": "Anthropic Claude API",
+      "model": "claude-sonnet-4-6",
+      "selection_inputs": ["impacted_modules", "historical_flakiness_data", "past_defect_hotspots", "business_criticality_tags"],
+      "output_format": "json",
+      "output_schema": {
+        "selected_test_ids": "array<string>",
+        "excluded_test_ids": "array<string>",
+        "reasoning": "string",
+        "estimated_time_saved_minutes": "integer"
+      }
+    },
+    {
+      "step": 4,
+      "name": "Redundancy & Overlap Detection",
+      "action": "identify_tests_with_duplicate_assertions_or_coverage",
+      "on_redundancy_found": "flag_for_suite_pruning_review"
+    },
+    {
+      "step": 5,
+      "name": "Execute Selected Subset",
+      "action": "trigger_targeted_test_run",
+      "fallback_rule": "run_full_suite_nightly_regardless_of_selection"
+    },
+    {
+      "step": 6,
+      "name": "Human Review Gate for Pruning",
+      "assignee_rule": "qa_lead",
+      "sla_hours": 48,
+      "actions": ["approve_pruning", "reject_pruning", "modify_selection_rules"]
+    },
+    {
+      "step": 7,
+      "name": "Report Optimization Impact",
+      "output": "optimization_report",
+      "includes": ["time_saved", "tests_selected_vs_total", "coverage_confidence_score"]
+    }
+  ],
+  "error_handling": {
+    "retry_policy": { "max_attempts": 2, "backoff": "linear" },
+    "on_selection_failure": "default_to_full_regression_run",
+    "safety_net": "always_run_full_suite_on_release_branch"
+  },
+  "quality_gates": {
+    "min_coverage_confidence_percent": 95,
+    "never_skip_critical_path_tests": true
+  },
+  "monitoring": {
+    "metrics_tracked": [
+      "avg_pipeline_time_reduction",
+      "escaped_defects_from_skipped_tests",
+      "suite_pruning_acceptance_rate",
+      "coverage_confidence_trend"
+    ]
+  }
+}

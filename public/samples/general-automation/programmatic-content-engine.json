@@ -1,0 +1,66 @@
+{
+  "name": "Programmatic Content Engine",
+  "version": "2.0.0",
+  "description": "Automated content production workflow: Content brief intake -> LLM article generation -> SEO & schema validation -> Human review gate -> Multi-channel publishing",
+  "owner": "Tech_Studio AI Automation Practice",
+  "trigger": {
+    "type": "cron",
+    "schedule": "0 8 * * 1-5",
+    "timezone": "Asia/Kolkata"
+  },
+  "workflow": [
+    {
+      "step": "fetch_content_briefs",
+      "source": "airtable",
+      "base": "Content Calendar",
+      "view": "Ready for Generation",
+      "fields": ["topic", "target_keyword", "audience", "tone", "word_count_target", "due_date"]
+    },
+    {
+      "step": "generate_article",
+      "llm_engine": "Claude Sonnet 4.6",
+      "prompt_template_ref": "templates/seo-article-v3.md",
+      "parameters": {
+        "temperature": 0.6,
+        "max_tokens": 4000,
+        "include_meta_description": true,
+        "include_headings_outline": true
+      }
+    },
+    {
+      "step": "seo_optimization_pass",
+      "checks": ["keyword_density", "readability_score", "internal_link_suggestions", "title_tag_length"],
+      "min_readability_grade": "8th_grade_flesch_kincaid"
+    },
+    {
+      "step": "schema_validation",
+      "schema_type": "Article",
+      "required_fields": ["headline", "author", "datePublished", "image", "description"],
+      "on_failure": "flag_for_manual_fix"
+    },
+    {
+      "step": "plagiarism_and_fact_check",
+      "provider": "Copyscape / internal fact-check pass",
+      "block_publish_on_fail": true
+    },
+    {
+      "step": "human_review_gate",
+      "assignee_rule": "round_robin:content_editors",
+      "sla_hours": 24,
+      "actions": ["approve", "request_revision", "reject"]
+    },
+    {
+      "step": "publish",
+      "destinations": ["webflow", "dev_to"],
+      "on_publish_success": ["update_airtable_status", "notify_slack_content_channel"]
+    }
+  ],
+  "error_handling": {
+    "retry_policy": { "max_attempts": 2, "backoff": "linear" },
+    "on_generation_failure": "notify_content_lead_and_pause_row",
+    "on_publish_failure": "queue_for_manual_retry"
+  },
+  "monitoring": {
+    "metrics_tracked": ["articles_generated_per_week", "avg_time_to_publish", "human_edit_rate", "organic_traffic_lift_30d"]
+  }
+}

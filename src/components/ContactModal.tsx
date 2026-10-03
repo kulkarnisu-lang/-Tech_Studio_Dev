@@ -1,16 +1,21 @@
 import { useState, useEffect, type FormEvent } from 'react';
-import { X, Send, CheckCircle2, Terminal, Loader2, Mail, ShieldCheck } from 'lucide-react';
+import { X, Send, CheckCircle2, Terminal, Loader2, Mail, ShieldCheck, Download } from 'lucide-react';
 import { useAdmin } from '../context/AdminContext';
 import { SendEmailOutcome } from '../lib/emailService';
+import { SAMPLE_WORKFLOWS } from '../data/sampleWorkflows';
+
+export type ContactModalMode = 'consultation' | 'sample-download';
 
 interface ContactModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialTopic?: string;
+  mode?: ContactModalMode;
 }
 
-export default function ContactModal({ isOpen, onClose, initialTopic }: ContactModalProps) {
+export default function ContactModal({ isOpen, onClose, initialTopic, mode = 'consultation' }: ContactModalProps) {
   const { companyConfig, addInquiry } = useAdmin();
+  const isSampleDownload = mode === 'sample-download';
 
   const getInitialFormData = (topic?: string) => ({
     name: '',
@@ -24,12 +29,14 @@ export default function ContactModal({ isOpen, onClose, initialTopic }: ContactM
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [emailOutcome, setEmailOutcome] = useState<SendEmailOutcome | null>(null);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
 
   // Reset modal state whenever it is opened
   useEffect(() => {
     if (isOpen) {
       setSubmitted(false);
       setEmailOutcome(null);
+      setSubmissionError(null);
       setFormData(getInitialFormData(initialTopic));
     }
   }, [isOpen, initialTopic]);
@@ -37,6 +44,7 @@ export default function ContactModal({ isOpen, onClose, initialTopic }: ContactM
   const handleClose = () => {
     setSubmitted(false);
     setEmailOutcome(null);
+    setSubmissionError(null);
     setFormData(getInitialFormData(initialTopic));
     onClose();
   };
@@ -64,6 +72,7 @@ export default function ContactModal({ isOpen, onClose, initialTopic }: ContactM
     if (!formData.name || !formData.email || isSubmitting) return;
 
     setIsSubmitting(true);
+    setSubmissionError(null);
     try {
       // Log inquiry to admin dashboard and dispatch dual emails
       const res = await addInquiry({
@@ -71,15 +80,15 @@ export default function ContactModal({ isOpen, onClose, initialTopic }: ContactM
         email: formData.email,
         company: formData.company,
         serviceInterest: formData.serviceInterest,
-        message: formData.message || 'Consultation request from website modal.',
-        source: 'modal',
+        message: formData.message || (isSampleDownload ? 'Requested the sample workflow library.' : 'Consultation request from website modal.'),
+        source: isSampleDownload ? 'sample-download' : 'modal',
       });
 
       setEmailOutcome(res.emailOutcome);
       setSubmitted(true);
     } catch (err) {
       console.error('Modal submission failed:', err);
-      setSubmitted(true);
+      setSubmissionError('We couldn’t save your request. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -92,7 +101,10 @@ export default function ContactModal({ isOpen, onClose, initialTopic }: ContactM
       onClick={handleClose}
     >
       <div
-        className="relative w-full max-w-lg bg-white dark:bg-[#0C111A] rounded-xl border border-slate-200 dark:border-slate-800 p-5 sm:p-7 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="consultation-modal-title"
+        className="relative w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto bg-white dark:bg-[#0C111A] rounded-xl border border-slate-200 dark:border-slate-800 p-5 sm:p-7 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close Button */}
@@ -115,15 +127,38 @@ export default function ContactModal({ isOpen, onClose, initialTopic }: ContactM
           </span>
         </div>
 
-        <h3 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-[#F8FAFC] tracking-tight mb-1">
-          Book a Quality Consultation
+        <h3 id="consultation-modal-title" className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-[#F8FAFC] tracking-tight mb-1">
+          {isSampleDownload ? 'Get the Workflow Samples' : 'Book a Quality Consultation'}
         </h3>
 
         <p className="text-xs text-slate-600 dark:text-slate-400 mb-5">
-          Discuss your testing stack, automation bottlenecks, or AI roadmap with our principal consultants.
+          {isSampleDownload ? 'Share your name and work email to access all 12 JSON workflow blueprints.' : 'Discuss your testing stack, automation bottlenecks, or AI roadmap with our principal consultants.'}
         </p>
 
-        {submitted ? (
+        {submitted && isSampleDownload ? (
+          <div className="space-y-4" aria-live="polite">
+            <div className="p-4 rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-500/10">
+              <h4 className="text-base font-bold text-slate-900 dark:text-white">Your workflow samples are ready</h4>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Download each blueprint below and adapt it to your tools and environment.</p>
+            </div>
+            <ul className="space-y-2 max-h-80 overflow-y-auto pr-1" aria-label="Workflow downloads">
+              {SAMPLE_WORKFLOWS.map((workflow) => (
+                <li key={workflow.id}>
+                  <a href={workflow.filePath} download={`${workflow.id}.json`} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-sky-500 text-slate-900 dark:text-white focus-visible:outline-2 focus-visible:outline-sky-500">
+                    <span>
+                      <span className="block text-sm font-semibold">{workflow.title}</span>
+                      <span className="text-xs text-slate-500 dark:text-slate-400">JSON · v{workflow.version}</span>
+                    </span>
+                    <Download className="w-4 h-4 shrink-0 text-sky-600 dark:text-sky-400" aria-hidden="true" />
+                  </a>
+                </li>
+              ))}
+            </ul>
+            <div className="flex justify-end">
+              <button type="button" onClick={handleClose} className="px-4 py-2 rounded-lg text-sm font-mono font-bold bg-slate-900 text-white dark:bg-white dark:text-slate-900 hover:opacity-90">Close Window</button>
+            </div>
+          </div>
+        ) : submitted ? (
           <div className="p-5 rounded-xl bg-slate-50 dark:bg-[#0C111A] border border-emerald-200 dark:border-emerald-800/80 text-left space-y-3.5 animate-in fade-in">
             <div className="flex items-center gap-2.5">
               <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400 shrink-0" />
@@ -177,12 +212,14 @@ export default function ContactModal({ isOpen, onClose, initialTopic }: ContactM
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-3.5">
+            {submissionError && <p role="alert" className="text-sm text-red-700 dark:text-red-400">{submissionError}</p>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="modal-name" className="block text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Name *
                 </label>
                 <input
+                  id="modal-name"
                   type="text"
                   required
                   value={formData.name}
@@ -193,10 +230,11 @@ export default function ContactModal({ isOpen, onClose, initialTopic }: ContactM
               </div>
 
               <div>
-                <label className="block text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="modal-email" className="block text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Work Email *
                 </label>
                 <input
+                  id="modal-email"
                   type="email"
                   required
                   value={formData.email}
@@ -207,12 +245,13 @@ export default function ContactModal({ isOpen, onClose, initialTopic }: ContactM
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className={isSampleDownload ? '' : 'grid grid-cols-1 sm:grid-cols-2 gap-3'}>
               <div>
-                <label className="block text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label htmlFor="modal-company" className="block text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Company
                 </label>
                 <input
+                  id="modal-company"
                   type="text"
                   value={formData.company}
                   onChange={(e) => setFormData({ ...formData, company: e.target.value })}
@@ -221,31 +260,33 @@ export default function ContactModal({ isOpen, onClose, initialTopic }: ContactM
                 />
               </div>
 
-              <div>
-                <label className="block text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              {!isSampleDownload && <div>
+                <label htmlFor="modal-topic" className="block text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Discussion Topic
                 </label>
                 <input
+                  id="modal-topic"
                   type="text"
                   value={formData.serviceInterest}
                   onChange={(e) => setFormData({ ...formData, serviceInterest: e.target.value })}
                   className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0A0C10] text-slate-900 dark:text-white text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-sky-500"
                 />
-              </div>
+              </div>}
             </div>
 
-            <div>
-              <label className="block text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-300 mb-1">
+            {!isSampleDownload && <div>
+              <label htmlFor="modal-message" className="block text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Context / Key Question
               </label>
               <textarea
+                id="modal-message"
                 rows={3}
                 value={formData.message}
                 onChange={(e) => setFormData({ ...formData, message: e.target.value })}
                 placeholder="Tell us about your testing challenges, timeline, or current goals..."
                 className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0A0C10] text-slate-900 dark:text-white text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-sky-500"
               />
-            </div>
+            </div>}
 
             <div className="pt-1">
               <button
@@ -256,11 +297,11 @@ export default function ContactModal({ isOpen, onClose, initialTopic }: ContactM
                 {isSubmitting ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Dispatching Request &amp; Emails...</span>
+                    <span>{isSampleDownload ? 'Preparing Your Downloads...' : 'Dispatching Request & Emails...'}</span>
                   </>
                 ) : (
                   <>
-                    <span>Initiate Consultation Request</span>
+                    <span>{isSampleDownload ? 'Access All 12 Downloads' : 'Initiate Consultation Request'}</span>
                     <Send className="w-3.5 h-3.5" />
                   </>
                 )}

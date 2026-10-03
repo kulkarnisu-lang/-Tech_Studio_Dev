@@ -1,0 +1,82 @@
+{
+  "name": "QA Knowledge Assistant",
+  "version": "1.0.0",
+  "description": "AI-powered automation workflow: Ingest QA knowledge sources -> Build searchable knowledge base -> Answer engineer queries -> Surface relevant test/defect history on demand",
+  "owner": "Tech_Studio QE Practice",
+  "trigger": {
+    "type": "hybrid",
+    "ingestion_trigger": { "type": "scheduled_cron", "schedule": "0 2 * * *" },
+    "query_trigger": { "type": "chat_command", "interfaces": ["slack_bot", "ide_extension", "internal_wiki_widget"] }
+  },
+  "input_schema": {
+    "ingestion_sources": ["test_management_tool", "confluence", "jira_defects", "runbooks", "postmortems", "codebase_test_directories"],
+    "query_schema": { "required": ["question", "requesting_user"], "optional": ["module_context", "sprint_context"] }
+  },
+  "steps": [
+    {
+      "step": 1,
+      "name": "Ingest & Chunk Knowledge Sources",
+      "action": "pull_and_chunk_documents",
+      "refresh_policy": "incremental_daily_sync"
+    },
+    {
+      "step": 2,
+      "name": "Build Vector Index",
+      "action": "generate_embeddings_and_index",
+      "provider": "vector_db",
+      "metadata_tags": ["source_type", "module", "date", "author"]
+    },
+    {
+      "step": 3,
+      "name": "Handle Incoming Query",
+      "action": "retrieve_relevant_chunks",
+      "retrieval_method": "hybrid_semantic_and_keyword_search",
+      "top_k": 8
+    },
+    {
+      "step": 4,
+      "name": "Generate Grounded Answer",
+      "provider": "Anthropic Claude API",
+      "model": "claude-sonnet-4-6",
+      "grounding_rule": "answer_only_from_retrieved_context_cite_sources",
+      "on_no_relevant_context": "respond_with_no_confident_answer_and_suggest_human_contact"
+    },
+    {
+      "step": 5,
+      "name": "Attach Source Citations",
+      "action": "link_back_to_original_document_or_ticket",
+      "purpose": "let_engineer_verify_and_go_deeper"
+    },
+    {
+      "step": 6,
+      "name": "Log Query & Feedback",
+      "action": "capture_thumbs_up_down_feedback",
+      "purpose": "identify_knowledge_gaps_and_retrieval_quality_issues"
+    },
+    {
+      "step": 7,
+      "name": "Weekly Gap Report",
+      "schedule": "weekly",
+      "action": "summarize_unanswered_or_low_confidence_queries",
+      "recipient": "qa_lead",
+      "purpose": "prioritize_documentation_backfill"
+    }
+  ],
+  "error_handling": {
+    "retry_policy": { "max_attempts": 2, "backoff": "linear" },
+    "on_retrieval_failure": "fall_back_to_keyword_search_only",
+    "on_generation_failure": "return_top_matching_documents_unsummarized"
+  },
+  "quality_gates": {
+    "never_answer_without_source_grounding": true,
+    "min_retrieval_confidence": 0.6
+  },
+  "monitoring": {
+    "metrics_tracked": [
+      "queries_per_week",
+      "positive_feedback_rate",
+      "avg_response_latency",
+      "knowledge_gap_backlog_size"
+    ]
+  }
+}

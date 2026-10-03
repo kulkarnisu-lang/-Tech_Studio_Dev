@@ -1,0 +1,87 @@
+{
+  "name": "CI Test Failure Analysis",
+  "version": "1.0.0",
+  "description": "AI-powered automation workflow: CI test run completion -> Log ingestion -> Failure clustering across parallel shards -> Root-cause summarization -> PR annotation",
+  "owner": "Tech_Studio QE Practice",
+  "trigger": {
+    "type": "event",
+    "source": "ci_pipeline_completion",
+    "condition": "test_run_status == 'failed' OR flaky_count > 0",
+    "supported_triggers": ["github_actions", "jenkins_post_build", "gitlab_ci"]
+  },
+  "input_schema": {
+    "required": ["run_id", "failed_test_logs", "historical_run_ids"],
+    "optional": ["screenshots", "video_traces", "network_har_files"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "name": "Ingest Failure Logs",
+      "action": "collect_logs_across_all_parallel_shards",
+      "sources": ["stdout_stderr", "stack_traces", "screenshots", "video_traces"]
+    },
+    {
+      "step": 2,
+      "name": "Cluster Identical Failures",
+      "action": "semantic_similarity_grouping",
+      "provider": "vector_db_embedding_match",
+      "similarity_threshold": 0.85,
+      "purpose": "collapse hundreds of parallel failures into distinct root-cause groups"
+    },
+    {
+      "step": 3,
+      "name": "Classify Failure Type",
+      "provider": "Anthropic Claude API",
+      "model": "claude-sonnet-4-6",
+      "classification_output": {
+        "category": "enum(genuine_regression, environment_timeout, flaky_test, test_data_issue, infra_outage)",
+        "confidence": "float (0-1)",
+        "suspected_root_cause": "string",
+        "affected_test_ids": "array<string>"
+      },
+      "cross_reference": "diff_against_last_known_passing_commit"
+    },
+    {
+      "step": 4,
+      "name": "Distinguish Regression vs Flake",
+      "action": "compare_against_historical_run_ids",
+      "flake_rule": "fails_intermittently_across_last_10_runs_on_same_commit",
+      "on_flake_detected": "auto_quarantine_and_log_to_flaky_test_registry"
+    },
+    {
+      "step": 5,
+      "name": "Generate Human-Readable Summary",
+      "output_format": "markdown",
+      "includes": ["failure_groups", "likely_root_cause_per_group", "suggested_next_action"]
+    },
+    {
+      "step": 6,
+      "name": "Annotate Pull Request",
+      "action": "post_pr_comment",
+      "template": "{{cluster_count}} distinct failures detected — {{genuine_regression_count}} likely regressions, {{flaky_count}} flagged as flaky. See details below."
+    },
+    {
+      "step": 7,
+      "name": "Escalate Genuine Regressions",
+      "condition": "category == 'genuine_regression'",
+      "on_true": ["notify_pr_author_and_assigned_reviewer", "block_merge_until_resolved"]
+    }
+  ],
+  "error_handling": {
+    "retry_policy": { "max_attempts": 2, "backoff": "linear" },
+    "on_classification_failure": "post_raw_logs_and_flag_for_manual_review",
+    "dead_letter_queue": "ci-failure-analysis-dlq"
+  },
+  "quality_gates": {
+    "min_classification_confidence": 0.7,
+    "block_merge_on_unresolved_regression": true
+  },
+  "monitoring": {
+    "metrics_tracked": [
+      "avg_time_to_root_cause",
+      "flaky_test_registry_growth_rate",
+      "engineering_hours_saved_vs_manual_log_review",
+      "classification_accuracy_vs_human_override"
+    ]
+  }
+}

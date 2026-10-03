@@ -1,0 +1,83 @@
+{
+  "name": "AI Lead Qualification Router",
+  "version": "2.0.0",
+  "description": "Production automation workflow: Webhook receiver -> Company enrichment -> AI lead scoring -> Conditional CRM routing -> Team alerting",
+  "owner": "Tech_Studio AI Automation Practice",
+  "trigger": {
+    "type": "webhook",
+    "endpoint": "/api/v1/webhooks/lead-capture",
+    "method": "POST",
+    "authentication": {
+      "type": "hmac_signature",
+      "header": "X-Webhook-Signature",
+      "secret_ref": "env:WEBHOOK_SIGNING_SECRET"
+    },
+    "rate_limit": { "requests_per_minute": 120 }
+  },
+  "input_schema": {
+    "required": ["email", "company_domain", "full_name"],
+    "optional": ["phone", "job_title", "source_campaign"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "name": "Validate & Deduplicate Lead",
+      "action": "check_crm_for_existing_contact",
+      "on_duplicate": "update_existing_record"
+    },
+    {
+      "step": 2,
+      "name": "Enrich Lead Data",
+      "provider": "Apollo / Clearbit API",
+      "fields_requested": ["company_size", "industry", "revenue_range", "tech_stack", "linkedin_url"],
+      "timeout_seconds": 8,
+      "on_failure": "continue_with_partial_data"
+    },
+    {
+      "step": 3,
+      "name": "AI Lead Scoring",
+      "provider": "Anthropic Claude API",
+      "model": "claude-sonnet-4-6",
+      "scoring_criteria": ["icp_fit", "budget_signal", "intent_signal", "company_size_fit"],
+      "output_format": "json",
+      "output_schema": {
+        "score": "integer (0-100)",
+        "reasoning": "string",
+        "recommended_tier": "enum(hot, warm, cold)"
+      },
+      "fallback_on_error": { "score": 0, "recommended_tier": "cold" }
+    },
+    {
+      "step": 4,
+      "name": "Conditional Routing",
+      "condition": "score >= 70",
+      "on_true": [
+        "create_hubspot_deal",
+        "assign_to_sales_rep_round_robin",
+        "send_slack_alert"
+      ],
+      "on_false_condition": "score >= 40 && score < 70",
+      "on_warm": ["add_to_nurture_sequence"],
+      "on_false": ["add_to_marketing_nurture_list"]
+    },
+    {
+      "step": 5,
+      "name": "Log Outcome",
+      "action": "write_to_analytics_store",
+      "destination": "data_warehouse.lead_routing_events"
+    }
+  ],
+  "error_handling": {
+    "retry_policy": { "max_attempts": 3, "backoff": "exponential" },
+    "dead_letter_queue": "leads-processing-dlq",
+    "alert_on_repeated_failure": {
+      "threshold": 5,
+      "window_minutes": 15,
+      "notify": "slack:#automation-alerts"
+    }
+  },
+  "monitoring": {
+    "sla_seconds": 30,
+    "metrics_tracked": ["processing_latency", "enrichment_success_rate", "scoring_accuracy_feedback_loop"]
+  }
+}

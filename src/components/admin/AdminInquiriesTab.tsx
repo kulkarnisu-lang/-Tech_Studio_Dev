@@ -99,6 +99,7 @@ export default function AdminInquiriesTab() {
         item.email.toLowerCase().includes(q) ||
         item.company.toLowerCase().includes(q) ||
         item.serviceInterest.toLowerCase().includes(q) ||
+        item.source.toLowerCase().includes(q) ||
         item.message.toLowerCase().includes(q);
       return matchesStatus && matchesSearch;
     });

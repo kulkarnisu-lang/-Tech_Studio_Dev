@@ -16,3 +16,16 @@ export const COMPANY_CONFIG: CompanyConfig = {
   websiteUrl: 'https://techstudio.consulting',
   calendarBookingUrl: '#contact',
 };
+
+// Saved profiles take precedence over defaults, but old template names must
+// not hide the verified founder name after a deployment.
+export function resolveCompanyConfig(saved: Partial<CompanyConfig>): CompanyConfig {
+  const founderName = typeof saved?.founderName === 'string' ? saved.founderName.trim() : '';
+  const isPlaceholder = /^\[\s*founder\s*name\s*\/\s*principal\s*consultant\s*\]$/i.test(founderName);
+
+  return {
+    ...COMPANY_CONFIG,
+    ...saved,
+    founderName: !founderName || isPlaceholder ? COMPANY_CONFIG.founderName : founderName,
+  };
+}

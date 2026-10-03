@@ -48,6 +48,15 @@ export interface AIUseCase {
   icon: string;
 }
 
+export interface SampleWorkflow {
+  id: string;
+  title: string;
+  summary: string;
+  category: 'qa-workflows' | 'general-automation';
+  filePath: string;
+  version: string;
+}
+
 export interface SolutionItem {
   id: string;
   problemHeadline: string;
@@ -168,7 +177,7 @@ export interface AdminInquiry {
   createdAt: string;
   status: InquiryStatus;
   notes?: string;
-  source: 'modal' | 'contact-form' | 'manual';
+  source: 'modal' | 'contact-form' | 'manual' | 'sample-download';
   emailDelivery?: EmailDeliveryStatus;
 }
 
@@ -178,10 +187,4 @@ export interface AdminActivityLog {
   action: string;
   details: string;
   user: string;
-}
-
-export interface AdminCredentials {
-  username: string;
-  passcode: string;
-  lastUpdated?: string;
 }

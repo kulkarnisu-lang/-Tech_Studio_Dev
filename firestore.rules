@@ -1,39 +1,66 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Inquiries: public can submit inquiries, anyone can read/update them in this consultation app
+    function isOwner() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'devmarlow01@gmail.com';
+    }
+
+    function isVisitorInquiry() {
+      let data = request.resource.data;
+      return data.keys().hasAll(['name', 'email', 'company', 'serviceInterest', 'message', 'createdAt', 'status', 'source'])
+        && data.keys().hasOnly(['name', 'email', 'company', 'serviceInterest', 'message', 'createdAt', 'status', 'source', 'notes', 'emailDelivery'])
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 320
+        && data.company is string && data.company.size() <= 500
+        && data.serviceInterest is string && data.serviceInterest.size() <= 500
+        && data.message is string && data.message.size() <= 10000
+        && data.createdAt is string
+        && data.status == 'new'
+        && data.source in ['modal', 'contact-form', 'sample-download']
+        && (!('notes' in data) || data.notes == '')
+        && (!('emailDelivery' in data) || data.emailDelivery is map);
+    }
+
+    // Visitors can submit a new lead, but cannot read or change existing leads.
     match /inquiries/{inquiryId} {
-      allow read, write: if true;
+      allow create: if isOwner() || isVisitorInquiry();
+      allow read, update, delete: if isOwner();
     }
 
     // Company profile & website settings
     match /companyConfig/{configId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isOwner();
     }
 
     // QA Services catalog
     match /services/{serviceId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isOwner();
     }
 
     // FAQs catalog
     match /faqs/{faqId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isOwner();
     }
 
     // Administrative audit logs
     match /activityLogs/{logId} {
-      allow read, write: if true;
+      allow read, write: if isOwner();
     }
 
-    // Admin security credentials
+    // Legacy passcodes no longer grant access to the application.
     match /adminSettings/{settingId} {
-      allow read, write: if true;
+      allow read, write: if isOwner();
     }
 
     // Email notifications configuration
     match /emailSettings/{settingId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isOwner();
     }
   }
 }

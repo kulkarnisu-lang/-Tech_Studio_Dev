@@ -1,0 +1,78 @@
+{
+  "name": "QA Documentation Assistant",
+  "version": "1.0.0",
+  "description": "AI-powered automation workflow: Test run & code change intake -> Auto-generated test documentation -> Release quality reports -> Stakeholder-ready summaries",
+  "owner": "Tech_Studio QE Practice",
+  "trigger": {
+    "type": "event",
+    "source": "sprint_end_or_release_candidate_cut",
+    "supported_triggers": ["scheduled_cron", "manual_cli", "release_tag_created"]
+  },
+  "input_schema": {
+    "required": ["test_run_results", "sprint_or_release_id"],
+    "optional": ["jira_epics", "code_change_summary", "defect_list"]
+  },
+  "steps": [
+    {
+      "step": 1,
+      "name": "Aggregate Test Execution Data",
+      "sources": ["ci_test_results", "test_management_tool", "coverage_reports"]
+    },
+    {
+      "step": 2,
+      "name": "Generate Test Case Documentation",
+      "provider": "Anthropic Claude API",
+      "model": "claude-sonnet-4-6",
+      "generated_artifacts": ["test_plan_summary", "traceability_matrix", "test_case_narrative_from_gherkin"],
+      "output_format": "markdown / confluence_page"
+    },
+    {
+      "step": 3,
+      "name": "Generate Release Quality Report",
+      "sections": ["test_pass_rate", "coverage_by_module", "open_defects_by_severity", "flaky_test_summary", "risk_areas_not_covered"],
+      "output_format": "pdf / html_dashboard"
+    },
+    {
+      "step": 4,
+      "name": "Generate Executive Summary",
+      "audience": "engineering_leadership_and_product",
+      "tone": "concise_business_readable",
+      "max_length_words": 250
+    },
+    {
+      "step": 5,
+      "name": "Human Review Gate",
+      "assignee_rule": "qa_lead_or_release_manager",
+      "sla_hours": 12,
+      "actions": ["approve", "edit", "regenerate"]
+    },
+    {
+      "step": 6,
+      "name": "Publish & Distribute",
+      "destinations": ["confluence", "slack_release_channel", "email_stakeholder_list"],
+      "action": "post_and_link_in_release_notes"
+    },
+    {
+      "step": 7,
+      "name": "Archive Version",
+      "action": "store_in_documentation_repository",
+      "tagging": "sprint_id / release_id"
+    }
+  ],
+  "error_handling": {
+    "retry_policy": { "max_attempts": 2, "backoff": "linear" },
+    "on_generation_failure": "notify_qa_lead_and_provide_raw_data_fallback"
+  },
+  "quality_gates": {
+    "require_human_approval_before_distribution": true,
+    "min_data_completeness_percent": 90
+  },
+  "monitoring": {
+    "metrics_tracked": [
+      "documentation_hours_saved_per_release",
+      "stakeholder_read_engagement",
+      "human_edit_rate",
+      "time_from_release_cut_to_report_delivery"
+    ]
+  }
+}

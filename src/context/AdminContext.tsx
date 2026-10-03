@@ -20,7 +20,6 @@ import {
   AdminInquiry,
   InquiryStatus,
   AdminActivityLog,
-  AdminCredentials,
   EmailServiceConfig,
 } from '../types';
 import {
@@ -30,30 +29,21 @@ import {
   isEmailJsConfigured,
   SendEmailOutcome,
 } from '../lib/emailService';
-import { COMPANY_CONFIG } from '../data/company';
+import { OWNER_EMAIL, isVerifiedOwner } from '../lib/adminAccess';
+import { COMPANY_CONFIG, resolveCompanyConfig } from '../data/company';
 import { SERVICES_DATA } from '../data/services';
 import { FAQS_DATA } from '../data/faqs';
 import { INITIAL_INQUIRIES } from '../data/sampleInquiries';
 
-export const AUTHORIZED_ADMIN_EMAIL =
-  (import.meta.env.VITE_ADMIN_EMAIL as string) || 'devmarlow01@gmail.com';
+export const AUTHORIZED_ADMIN_EMAIL = OWNER_EMAIL;
 
 const STORAGE_KEYS = {
-  AUTH: 'techstudio_admin_auth_v1',
-  USER_EMAIL: 'techstudio_admin_email_v1',
-  FALLBACK_CREDENTIALS: 'techstudio_admin_credentials_v2',
   FALLBACK_COMPANY: 'techstudio_company_config_v1',
   FALLBACK_SERVICES: 'techstudio_services_v1',
   FALLBACK_FAQS: 'techstudio_faqs_v1',
   FALLBACK_INQUIRIES: 'techstudio_inquiries_v1',
   FALLBACK_LOGS: 'techstudio_activity_logs_v1',
   FALLBACK_EMAIL: 'techstudio_email_config_v1',
-};
-
-const DEFAULT_CREDENTIALS: AdminCredentials = {
-  username: (import.meta.env.VITE_ADMIN_USERNAME as string) || 'DevMarlow',
-  passcode: (import.meta.env.VITE_ADMIN_PASSCODE as string) || '',
-  lastUpdated: new Date().toISOString(),
 };
 
 const INITIAL_LOGS: AdminActivityLog[] = [
@@ -86,13 +76,8 @@ interface AdminContextType {
   isAuthenticated: boolean;
   adminEmail: string;
   currentUserEmail: string | null;
-  credentials: AdminCredentials;
-  login: (usernameOrPasscode: string, passcode?: string) => boolean;
   loginWithGoogle: () => Promise<{ success: boolean; message: string }>;
-  verifyEmailAccess: (email: string) => Promise<{ authorized: boolean; message: string; email: string }>;
   logout: () => Promise<void>;
-  updateCredentials: (newUsername: string, newPasscode: string) => Promise<{ success: boolean; message: string }>;
-  resetCredentialsToDefault: () => Promise<void>;
 
   // Company Profile
   companyConfig: CompanyConfig;
@@ -138,47 +123,28 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isAdminView, setIsAdminView] = useState(() => window.location.hash === '#admin');
   const [isFirestoreConnected, setIsFirestoreConnected] = useState(true);
 
-  // Authentication State
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    const isAuth = sessionStorage.getItem(STORAGE_KEYS.AUTH) === 'true';
-    const email = sessionStorage.getItem(STORAGE_KEYS.USER_EMAIL);
-    // Invalidate if email was previously stored but does not match authorized owner
-    if (isAuth && email && email.toLowerCase() !== AUTHORIZED_ADMIN_EMAIL.toLowerCase()) {
-      sessionStorage.removeItem(STORAGE_KEYS.AUTH);
-      sessionStorage.removeItem(STORAGE_KEYS.USER_EMAIL);
-      return false;
-    }
-    return isAuth;
-  });
-  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(() => {
-    const email = sessionStorage.getItem(STORAGE_KEYS.USER_EMAIL);
-    if (email && email.toLowerCase() !== AUTHORIZED_ADMIN_EMAIL.toLowerCase()) {
-      return null;
-    }
-    return email || null;
-  });
+  // Only Firebase's verified owner session grants administrative access.
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
-  // Listen to Firebase Auth state for authorized administrator
   useEffect(() => {
+    // Discard legacy browser flags and passcodes; they are not identity proof.
+    sessionStorage.removeItem('techstudio_admin_auth_v1');
+    sessionStorage.removeItem('techstudio_admin_email_v1');
+    localStorage.removeItem('techstudio_admin_credentials_v2');
     if (!auth) return;
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user && user.email) {
-        if (user.email.toLowerCase() === AUTHORIZED_ADMIN_EMAIL.toLowerCase()) {
-          setIsAuthenticated(true);
-          setCurrentUserEmail(user.email);
-          sessionStorage.setItem(STORAGE_KEYS.AUTH, 'true');
-          sessionStorage.setItem(STORAGE_KEYS.USER_EMAIL, user.email);
-        } else {
-          // Explicitly reject and disconnect any non-admin email
-          setIsAuthenticated(false);
-          setCurrentUserEmail(null);
-          sessionStorage.removeItem(STORAGE_KEYS.AUTH);
-          sessionStorage.removeItem(STORAGE_KEYS.USER_EMAIL);
-        }
-      }
+    return onAuthStateChanged(auth, (user) => {
+      const owner = isVerifiedOwner(user);
+      setIsAuthenticated(owner);
+      setCurrentUserEmail(owner ? user!.email : null);
     });
-    return () => unsubscribe();
   }, []);
+
+  const requireOwnerAccess = () => {
+    if (!isVerifiedOwner(auth?.currentUser)) {
+      throw new Error('Only the verified site owner can make changes. Sign in with Google.');
+    }
+  };
 
   // Keyboard shortcut listener for Administrator access (Ctrl+Shift+A / Cmd+Shift+A)
   useEffect(() => {
@@ -193,20 +159,10 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   // Data States (initialized from local cache or defaults for zero-delay SSR / initial render)
-  const [credentials, setCredentials] = useState<AdminCredentials>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.FALLBACK_CREDENTIALS);
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return DEFAULT_CREDENTIALS;
-  });
-
   const [companyConfig, setCompanyConfig] = useState<CompanyConfig>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.FALLBACK_COMPANY);
-      if (saved) return JSON.parse(saved);
+      if (saved) return resolveCompanyConfig(JSON.parse(saved));
     } catch {
       // ignore
     }
@@ -279,6 +235,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // FIRESTORE REAL-TIME SUBSCRIPTIONS & SEEDING
   // -------------------------------------------------------------
   useEffect(() => {
+    let cancelled = false;
     let unsubscribeInquiries: (() => void) | undefined;
     let unsubscribeLogs: (() => void) | undefined;
 
@@ -292,24 +249,31 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // 1. Company Config document subscription
         const companyDocRef = doc(db, 'companyConfig', 'profile');
         const companySnap = await getDoc(companyDocRef);
+        if (cancelled) return;
         if (companySnap.exists()) {
-          const remoteData = companySnap.data() as CompanyConfig;
+          const remoteData = resolveCompanyConfig(companySnap.data() as CompanyConfig);
           setCompanyConfig(remoteData);
           localStorage.setItem(STORAGE_KEYS.FALLBACK_COMPANY, JSON.stringify(remoteData));
-        } else {
-          // Seed defaults to Firestore
+        } else if (isVerifiedOwner(auth?.currentUser)) {
           await setDoc(companyDocRef, COMPANY_CONFIG);
         }
 
-        // 2. Admin Security Credentials document subscription
-        const credsDocRef = doc(db, 'adminSettings', 'credentials');
-        const credsSnap = await getDoc(credsDocRef);
-        if (credsSnap.exists()) {
-          const remoteCreds = credsSnap.data() as AdminCredentials;
-          setCredentials(remoteCreds);
-          localStorage.setItem(STORAGE_KEYS.FALLBACK_CREDENTIALS, JSON.stringify(remoteCreds));
-        } else {
-          await setDoc(credsDocRef, DEFAULT_CREDENTIALS);
+        // 5. Email Settings document
+        const emailDocRef = doc(db, 'emailSettings', 'config');
+        const emailSnap = await getDoc(emailDocRef);
+        if (cancelled) return;
+        if (emailSnap.exists()) {
+          const remoteEmail = emailSnap.data() as EmailServiceConfig;
+          setEmailConfig(remoteEmail);
+          localStorage.setItem(STORAGE_KEYS.FALLBACK_EMAIL, JSON.stringify(remoteEmail));
+        } else if (isVerifiedOwner(auth?.currentUser)) {
+          await setDoc(emailDocRef, DEFAULT_EMAIL_CONFIG);
+        }
+
+        // Private CRM and audit data are only loaded after verified owner sign-in.
+        if (cancelled || !isVerifiedOwner(auth?.currentUser)) {
+          setIsFirestoreConnected(Boolean(db));
+          return;
         }
 
         // 3. Realtime Inquiries listener
@@ -378,17 +342,6 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         );
 
-        // 5. Email Settings document
-        const emailDocRef = doc(db, 'emailSettings', 'config');
-        const emailSnap = await getDoc(emailDocRef);
-        if (emailSnap.exists()) {
-          const remoteEmail = emailSnap.data() as EmailServiceConfig;
-          setEmailConfig(remoteEmail);
-          localStorage.setItem(STORAGE_KEYS.FALLBACK_EMAIL, JSON.stringify(remoteEmail));
-        } else {
-          await setDoc(emailDocRef, DEFAULT_EMAIL_CONFIG);
-        }
-
         isInitializedRef.current = true;
         setIsFirestoreConnected(true);
       } catch (err) {
@@ -400,10 +353,11 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setupSubscriptions();
 
     return () => {
+      cancelled = true;
       if (unsubscribeInquiries) unsubscribeInquiries();
       if (unsubscribeLogs) unsubscribeLogs();
     };
-  }, []);
+  }, [isAuthenticated]);
 
   // -------------------------------------------------------------
   // ACTIONS & LOGGING
@@ -415,14 +369,14 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       timestamp: new Date().toISOString(),
       action,
       details,
-      user: credentials.username || 'Dev Marlow / Sharad',
+      user: auth?.currentUser?.email || 'Visitor',
     };
 
     // Optimistic local update
     setActivityLogs((prev) => [newLog, ...prev].slice(0, 50));
     try {
       localStorage.setItem(STORAGE_KEYS.FALLBACK_LOGS, JSON.stringify([newLog, ...activityLogs].slice(0, 50)));
-      if (db) {
+      if (db && isVerifiedOwner(auth?.currentUser)) {
         await setDoc(doc(db, 'activityLogs', newLogId), {
           timestamp: newLog.timestamp,
           action: newLog.action,
@@ -450,56 +404,19 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // -------------------------------------------------------------
   // AUTHENTICATION
   // -------------------------------------------------------------
-  const login = (usernameOrPasscode: string, optionalPasscode?: string): boolean => {
-    let inputUser = '';
-    let inputPass = '';
-
-    if (optionalPasscode !== undefined) {
-      inputUser = usernameOrPasscode.trim();
-      inputPass = optionalPasscode.trim();
-    } else {
-      inputPass = usernameOrPasscode.trim();
-    }
-
-    const matchesCurrent =
-      optionalPasscode !== undefined
-        ? inputUser.toLowerCase() === credentials.username.toLowerCase() && inputPass === credentials.passcode
-        : inputPass === credentials.passcode;
-
-    const matchesDefault =
-      (inputUser.toLowerCase() === DEFAULT_CREDENTIALS.username.toLowerCase() || !inputUser) &&
-      inputPass === DEFAULT_CREDENTIALS.passcode;
-
-    if (matchesCurrent || matchesDefault) {
-      setIsAuthenticated(true);
-      setCurrentUserEmail(AUTHORIZED_ADMIN_EMAIL);
-      sessionStorage.setItem(STORAGE_KEYS.AUTH, 'true');
-      sessionStorage.setItem(STORAGE_KEYS.USER_EMAIL, AUTHORIZED_ADMIN_EMAIL);
-      logAction('Admin Logged In', `Authenticated as "${inputUser || credentials.username}".`);
-      return true;
-    }
-
-    logAction('Login Failed', `Failed sign-in attempt for username "${inputUser || 'anonymous'}".`);
-    return false;
-  };
-
   const loginWithGoogle = async (): Promise<{ success: boolean; message: string }> => {
     if (!auth) {
       return {
         success: false,
-        message: 'Firebase Authentication is not available. Please verify Firebase configuration or use Admin Credentials.',
+        message: 'Firebase Authentication is not available. Configure Firebase Authentication to enable owner sign-in.',
       };
     }
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
-      const email = user.email?.toLowerCase();
-
-      if (email === AUTHORIZED_ADMIN_EMAIL.toLowerCase()) {
+      if (isVerifiedOwner(user)) {
         setIsAuthenticated(true);
         setCurrentUserEmail(user.email || AUTHORIZED_ADMIN_EMAIL);
-        sessionStorage.setItem(STORAGE_KEYS.AUTH, 'true');
-        sessionStorage.setItem(STORAGE_KEYS.USER_EMAIL, user.email || AUTHORIZED_ADMIN_EMAIL);
         await logAction('Admin Google Auth', `Authorized sign-in by owner: ${user.email}`);
         return {
           success: true,
@@ -509,8 +426,6 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         await signOut(auth);
         setIsAuthenticated(false);
         setCurrentUserEmail(null);
-        sessionStorage.removeItem(STORAGE_KEYS.AUTH);
-        sessionStorage.removeItem(STORAGE_KEYS.USER_EMAIL);
         await logAction(
           'Unauthorized Auth Rejected',
           `Rejected Google sign-in attempt from unauthorized account: ${user.email}`
@@ -529,87 +444,9 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const verifyEmailAccess = async (
-    email: string
-  ): Promise<{ authorized: boolean; message: string; email: string }> => {
-    const cleaned = email.trim().toLowerCase();
-    const authorized = cleaned === AUTHORIZED_ADMIN_EMAIL.toLowerCase();
-
-    if (authorized) {
-      await logAction('Policy Verification: Granted', `Account "${email}" confirmed as authorized owner.`);
-      return {
-        authorized: true,
-        email,
-        message: `ACCESS GRANTED: Account "${email}" is the authorized administrator (${AUTHORIZED_ADMIN_EMAIL}). Full operations access is permitted.`,
-      };
-    } else {
-      await logAction(
-        'Policy Verification: Denied',
-        `Account "${email}" rejected. Access strictly restricted to "${AUTHORIZED_ADMIN_EMAIL}".`
-      );
-      return {
-        authorized: false,
-        email,
-        message: `ACCESS DENIED: Account "${email}" is NOT authorized. The Admin Console is strictly restricted to "${AUTHORIZED_ADMIN_EMAIL}".`,
-      };
-    }
-  };
-
-  const updateCredentials = async (
-    newUsername: string,
-    newPasscode: string
-  ): Promise<{ success: boolean; message: string }> => {
-    const trimmedUser = newUsername.trim();
-    const trimmedPass = newPasscode.trim();
-
-    if (!trimmedUser || trimmedUser.length < 2) {
-      return { success: false, message: 'Username must be at least 2 characters long.' };
-    }
-    if (!trimmedPass || trimmedPass.length < 4) {
-      return { success: false, message: 'Password must be at least 4 characters long.' };
-    }
-
-    const updated: AdminCredentials = {
-      username: trimmedUser,
-      passcode: trimmedPass,
-      lastUpdated: new Date().toISOString(),
-    };
-
-    setCredentials(updated);
-    try {
-      localStorage.setItem(STORAGE_KEYS.FALLBACK_CREDENTIALS, JSON.stringify(updated));
-      if (db) {
-        await setDoc(doc(db, 'adminSettings', 'credentials'), updated);
-      }
-    } catch (err) {
-      console.warn('Failed to persist credentials to Firestore:', err);
-    }
-
-    await logAction('Credentials Updated', `Admin username set to "${trimmedUser}" and synced to Firestore.`);
-    return { success: true, message: 'Admin credentials updated and synced to Firestore.' };
-  };
-
-  const resetCredentialsToDefault = async () => {
-    setCredentials(DEFAULT_CREDENTIALS);
-    try {
-      localStorage.setItem(STORAGE_KEYS.FALLBACK_CREDENTIALS, JSON.stringify(DEFAULT_CREDENTIALS));
-      if (db) {
-        await setDoc(doc(db, 'adminSettings', 'credentials'), DEFAULT_CREDENTIALS);
-      }
-    } catch (err) {
-      console.warn('Failed to reset credentials in Firestore:', err);
-    }
-    await logAction(
-      'Credentials Reset',
-      `Admin username and password reset to configured defaults (Username: ${DEFAULT_CREDENTIALS.username}).`
-    );
-  };
-
   const logout = async () => {
     setIsAuthenticated(false);
     setCurrentUserEmail(null);
-    sessionStorage.removeItem(STORAGE_KEYS.AUTH);
-    sessionStorage.removeItem(STORAGE_KEYS.USER_EMAIL);
     if (auth && auth.currentUser) {
       try {
         await signOut(auth);
@@ -624,6 +461,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // COMPANY CONFIG
   // -------------------------------------------------------------
   const updateCompanyConfig = async (newConfig: CompanyConfig) => {
+    requireOwnerAccess();
     setCompanyConfig(newConfig);
     try {
       localStorage.setItem(STORAGE_KEYS.FALLBACK_COMPANY, JSON.stringify(newConfig));
@@ -640,6 +478,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // SERVICES
   // -------------------------------------------------------------
   const updateServices = async (newServices: ServiceItem[]) => {
+    requireOwnerAccess();
     setServices(newServices);
     try {
       localStorage.setItem(STORAGE_KEYS.FALLBACK_SERVICES, JSON.stringify(newServices));
@@ -655,6 +494,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const addService = async (newService: ServiceItem) => {
+    requireOwnerAccess();
     const updated = [...services, newService];
     setServices(updated);
     try {
@@ -669,6 +509,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const deleteService = async (id: string) => {
+    requireOwnerAccess();
     const target = services.find((s) => s.id === id);
     const updated = services.filter((s) => s.id !== id);
     setServices(updated);
@@ -687,6 +528,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // FAQS
   // -------------------------------------------------------------
   const updateFaqs = async (newFaqs: FAQItem[]) => {
+    requireOwnerAccess();
     setFaqs(newFaqs);
     try {
       localStorage.setItem(STORAGE_KEYS.FALLBACK_FAQS, JSON.stringify(newFaqs));
@@ -702,6 +544,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const addFaq = async (newFaq: Omit<FAQItem, 'id'>) => {
+    requireOwnerAccess();
     const createdId = `faq-${Date.now()}`;
     const created: FAQItem = {
       ...newFaq,
@@ -721,6 +564,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const deleteFaq = async (id: string) => {
+    requireOwnerAccess();
     const target = faqs.find((f) => f.id === id);
     const updated = faqs.filter((f) => f.id !== id);
     setFaqs(updated);
@@ -766,26 +610,26 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       emailDelivery: emailOutcome.emailDelivery,
     };
 
-    // Optimistic UI update
+    // Persist first: a failed cloud submission must leave the form retryable.
+    if (db) {
+      await setDoc(doc(db, 'inquiries', newInquiryId), {
+        name: newInquiry.name,
+        email: newInquiry.email,
+        company: newInquiry.company,
+        serviceInterest: newInquiry.serviceInterest,
+        message: newInquiry.message,
+        createdAt: newInquiry.createdAt,
+        status: newInquiry.status,
+        notes: newInquiry.notes || '',
+        source: newInquiry.source,
+        emailDelivery: newInquiry.emailDelivery,
+      });
+    }
     setInquiries((prev) => [newInquiry, ...prev]);
     try {
       localStorage.setItem(STORAGE_KEYS.FALLBACK_INQUIRIES, JSON.stringify([newInquiry, ...inquiries]));
-      if (db) {
-        await setDoc(doc(db, 'inquiries', newInquiryId), {
-          name: newInquiry.name,
-          email: newInquiry.email,
-          company: newInquiry.company,
-          serviceInterest: newInquiry.serviceInterest,
-          message: newInquiry.message,
-          createdAt: newInquiry.createdAt,
-          status: newInquiry.status,
-          notes: newInquiry.notes || '',
-          source: newInquiry.source,
-          emailDelivery: newInquiry.emailDelivery,
-        });
-      }
     } catch (err) {
-      console.warn('Failed to write inquiry to Firestore:', err);
+      console.warn('Could not cache inquiry locally:', err);
     }
 
     const modeTag = emailOutcome.simulated ? '(Simulation Mode)' : '(Live EmailJS)';
@@ -798,6 +642,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const resendInquiryEmails = async (inquiryId: string): Promise<{ success: boolean; message: string }> => {
+    requireOwnerAccess();
     const target = inquiries.find((i) => i.id === inquiryId);
     if (!target) {
       return { success: false, message: 'Inquiry record not found.' };
@@ -844,6 +689,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateInquiryStatus = async (id: string, status: InquiryStatus) => {
+    requireOwnerAccess();
     setInquiries((prev) => prev.map((item) => (item.id === id ? { ...item, status } : item)));
     try {
       if (db) {
@@ -856,6 +702,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateInquiryNotes = async (id: string, notes: string) => {
+    requireOwnerAccess();
     setInquiries((prev) => prev.map((item) => (item.id === id ? { ...item, notes } : item)));
     try {
       if (db) {
@@ -868,6 +715,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const deleteInquiry = async (id: string) => {
+    requireOwnerAccess();
     setInquiries((prev) => prev.filter((item) => item.id !== id));
     try {
       if (db) {
@@ -883,6 +731,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // EMAIL INTEGRATION (EMAILJS)
   // -------------------------------------------------------------
   const updateEmailConfig = async (newConfig: EmailServiceConfig) => {
+    requireOwnerAccess();
     setEmailConfig(newConfig);
     try {
       localStorage.setItem(STORAGE_KEYS.FALLBACK_EMAIL, JSON.stringify(newConfig));
@@ -899,6 +748,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const resetEmailConfigToDefault = async () => {
+    requireOwnerAccess();
     setEmailConfig(DEFAULT_EMAIL_CONFIG);
     try {
       localStorage.setItem(STORAGE_KEYS.FALLBACK_EMAIL, JSON.stringify(DEFAULT_EMAIL_CONFIG));
@@ -915,6 +765,7 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     type: 'user' | 'owner',
     testEmail: string
   ): Promise<{ success: boolean; message: string; simulated: boolean }> => {
+    requireOwnerAccess();
     const outcome = await sendTestEmail(type, testEmail, emailConfig);
     await logAction(
       `Email Test Executed: ${type === 'user' ? 'Client Confirmation' : 'Owner Alert'}`,
@@ -927,12 +778,12 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // FACTORY RESET
   // -------------------------------------------------------------
   const resetToDefaults = async () => {
+    requireOwnerAccess();
     setCompanyConfig(COMPANY_CONFIG);
     setServices(SERVICES_DATA);
     setFaqs(FAQS_DATA);
     setInquiries(INITIAL_INQUIRIES);
     setActivityLogs(INITIAL_LOGS);
-    setCredentials(DEFAULT_CREDENTIALS);
     setEmailConfig(DEFAULT_EMAIL_CONFIG);
 
     try {
@@ -941,19 +792,17 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       localStorage.removeItem(STORAGE_KEYS.FALLBACK_FAQS);
       localStorage.removeItem(STORAGE_KEYS.FALLBACK_INQUIRIES);
       localStorage.removeItem(STORAGE_KEYS.FALLBACK_LOGS);
-      localStorage.removeItem(STORAGE_KEYS.FALLBACK_CREDENTIALS);
       localStorage.removeItem(STORAGE_KEYS.FALLBACK_EMAIL);
 
       // Reset in Firestore
       if (db) {
         await setDoc(doc(db, 'companyConfig', 'profile'), COMPANY_CONFIG);
-        await setDoc(doc(db, 'adminSettings', 'credentials'), DEFAULT_CREDENTIALS);
         await setDoc(doc(db, 'emailSettings', 'config'), DEFAULT_EMAIL_CONFIG);
       }
     } catch (err) {
       console.warn('Factory reset Firestore sync error:', err);
     }
-    await logAction('Factory Reset', 'Settings, credentials, and content reset to defaults in Firestore.');
+    await logAction('Factory Reset', 'Settings and content reset to defaults in Firestore.');
   };
 
   return (
@@ -966,13 +815,8 @@ export const AdminProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isAuthenticated,
         adminEmail: AUTHORIZED_ADMIN_EMAIL,
         currentUserEmail,
-        credentials,
-        login,
         loginWithGoogle,
-        verifyEmailAccess,
         logout,
-        updateCredentials,
-        resetCredentialsToDefault,
         companyConfig,
         updateCompanyConfig,
         services,
